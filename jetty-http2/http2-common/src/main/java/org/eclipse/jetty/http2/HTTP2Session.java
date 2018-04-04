@@ -21,10 +21,12 @@ package org.eclipse.jetty.http2;
 import java.io.IOException;
 import java.nio.channels.ClosedChannelException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Map;
+import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
@@ -77,6 +79,7 @@ public abstract class HTTP2Session extends ContainerLifeCycle implements ISessio
     private final AtomicInteger sendWindow = new AtomicInteger();
     private final AtomicInteger recvWindow = new AtomicInteger();
     private final AtomicReference<CloseState> closed = new AtomicReference<>(CloseState.NOT_CLOSED);
+    private final StreamCreator streamCreator = new StreamCreator();
     private final AtomicLong bytesWritten = new AtomicLong();
     private final Scheduler scheduler;
     private final EndPoint endPoint;
@@ -479,6 +482,11 @@ public abstract class HTTP2Session extends ContainerLifeCycle implements ISessio
     @Override
     public void newStream(HeadersFrame frame, Promise<Stream> promise, Stream.Listener listener)
     {
+        streamCreator.newStream(frame, promise, listener);
+    }
+
+    public void newStreamOld(HeadersFrame frame, Promise<Stream> promise, Stream.Listener listener)
+    {
         // Synchronization is necessary to atomically create
         // the stream id and enqueue the frame to be sent.
         boolean queued;
@@ -493,7 +501,7 @@ public abstract class HTTP2Session extends ContainerLifeCycle implements ISessio
                         priority.getWeight(), priority.isExclusive());
                 frame = new HeadersFrame(streamId, frame.getMetaData(), priority, frame.isEndStream());
             }
-            final IStream stream = createLocalStream(streamId, promise);
+            final IStream stream = createLocalStream(streamId);
             if (stream == null)
                 return;
             stream.setListener(listener);
@@ -509,40 +517,13 @@ public abstract class HTTP2Session extends ContainerLifeCycle implements ISessio
     @Override
     public int priority(PriorityFrame frame, Callback callback)
     {
-        int streamId = frame.getStreamId();
-        IStream stream = streams.get(streamId);
-        if (stream == null)
-        {
-            streamId = streamIds.getAndAdd(2);
-            frame = new PriorityFrame(streamId, frame.getParentStreamId(),
-                    frame.getWeight(), frame.isExclusive());
-        }
-        control(stream, callback, frame);
-        return streamId;
+        return streamCreator.priority(frame, callback);
     }
 
     @Override
     public void push(IStream stream, Promise<Stream> promise, PushPromiseFrame frame, Stream.Listener listener)
     {
-        // Synchronization is necessary to atomically create
-        // the stream id and enqueue the frame to be sent.
-        boolean queued;
-        synchronized (this)
-        {
-            int streamId = streamIds.getAndAdd(2);
-            frame = new PushPromiseFrame(frame.getStreamId(), streamId, frame.getMetaData());
-
-            final IStream pushStream = createLocalStream(streamId, promise);
-            if (pushStream == null)
-                return;
-            pushStream.setListener(listener);
-
-            ControlEntry entry = new ControlEntry(frame, pushStream, new PromiseCallback<>(promise, pushStream));
-            queued = flusher.append(entry);
-        }
-        // Iterate outside the synchronized block.
-        if (queued)
-            flusher.iterate();
+        streamCreator.push(frame, promise, listener);
     }
 
     @Override
@@ -683,17 +664,14 @@ public abstract class HTTP2Session extends ContainerLifeCycle implements ISessio
         }
     }
 
-    protected IStream createLocalStream(int streamId, Promise<Stream> promise)
+    protected IStream createLocalStream(int streamId)
     {
         while (true)
         {
             int localCount = localStreamCount.get();
             int maxCount = getMaxLocalStreams();
             if (maxCount >= 0 && localCount >= maxCount)
-            {
-                promise.failed(new IllegalStateException("Max local stream count " + maxCount + " exceeded"));
-                return null;
-            }
+                throw new IllegalStateException("Max local stream count " + maxCount + " exceeded");
             if (localStreamCount.compareAndSet(localCount, localCount + 1))
                 break;
         }
@@ -709,8 +687,7 @@ public abstract class HTTP2Session extends ContainerLifeCycle implements ISessio
         }
         else
         {
-            promise.failed(new IllegalStateException("Duplicate stream " + streamId));
-            return null;
+            throw new IllegalStateException("Duplicate stream " + streamId);
         }
     }
 
@@ -1502,6 +1479,138 @@ public abstract class HTTP2Session extends ContainerLifeCycle implements ISessio
         private void complete()
         {
             terminate(failure);
+        }
+    }
+
+    /**
+     * SPEC: It is required that stream ids are strictly crescent.
+     * Here we use a queue to atomically create the stream id and
+     * claim the slot in the queue. Concurrent threads will only
+     *
+     */
+    private class StreamCreator
+    {
+        private final Queue<Slot> slots = new ArrayDeque<>();
+        private Thread flushing;
+
+        private int priority(PriorityFrame frame, Callback callback)
+        {
+            Slot slot = new Slot();
+            int streamId = frame.getStreamId();
+            if (streamId <= 0)
+            {
+                synchronized (this)
+                {
+                    streamId = streamIds.getAndAdd(2);
+                    slots.offer(slot);
+                }
+                frame = new PriorityFrame(streamId, frame);
+            }
+            else
+            {
+                synchronized (this)
+                {
+                    slots.offer(slot);
+                }
+            }
+
+            slot.entry = new ControlEntry(frame, null, callback);
+            flush();
+            return streamId;
+        }
+
+        private void newStream(HeadersFrame frame, Promise<Stream> promise, Stream.Listener listener)
+        {
+            try
+            {
+                Slot slot = new Slot();
+                int streamId = frame.getStreamId();
+                if (streamId <= 0)
+                {
+                    synchronized (this)
+                    {
+                        streamId = streamIds.getAndAdd(2);
+                        slots.offer(slot);
+                    }
+                    PriorityFrame priority = frame.getPriority();
+                    priority = priority == null ? null : new PriorityFrame(streamId, priority);
+                    frame = new HeadersFrame(streamId, priority, frame);
+                }
+                else
+                {
+                    synchronized (this)
+                    {
+                        slots.offer(slot);
+                    }
+                }
+
+                IStream stream = createLocalStream(streamId);
+                stream.setListener(listener);
+                slot.entry = new ControlEntry(frame, stream, new PromiseCallback<>(promise, stream));
+                flush();
+            }
+            catch (Throwable x)
+            {
+                promise.failed(x);
+            }
+        }
+
+        private void push(PushPromiseFrame frame, Promise<Stream> promise, Stream.Listener listener)
+        {
+            try
+            {
+                Slot slot = new Slot();
+                int streamId;
+                synchronized (this)
+                {
+                    streamId = streamIds.getAndAdd(2);
+                    slots.offer(slot);
+                }
+                frame = new PushPromiseFrame(streamId, frame);
+
+                IStream pushStream = createLocalStream(streamId);
+                pushStream.setListener(listener);
+                slot.entry = new ControlEntry(frame, pushStream, new PromiseCallback<>(promise, pushStream));
+                flush();
+            }
+            catch (Throwable x)
+            {
+                promise.failed(x);
+            }
+        }
+
+        private void flush()
+        {
+            Thread thread = Thread.currentThread();
+            boolean queued = false;
+            while (true)
+            {
+                ControlEntry entry = null;
+                synchronized (this)
+                {
+                    if (flushing != null && flushing != thread)
+                        return;
+                    flushing = thread;
+
+                    Slot slot = slots.peek();
+                    if (slot != null)
+                        entry = slot.entry;
+                    if (entry == null)
+                    {
+                        flushing = null;
+                        break;
+                    }
+                    slots.poll();
+                }
+                queued |= flusher.append(entry);
+            }
+            if (queued)
+                flusher.iterate();
+        }
+
+        private class Slot
+        {
+            private volatile ControlEntry entry;
         }
     }
 }
