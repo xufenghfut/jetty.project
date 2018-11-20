@@ -23,7 +23,6 @@ import java.nio.ByteBuffer;
 import java.util.ArrayDeque;
 import java.util.Collections;
 import java.util.List;
-import java.util.Locale;
 import java.util.Queue;
 import java.util.function.BiFunction;
 
@@ -39,6 +38,7 @@ import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.http.MetaData;
 import org.eclipse.jetty.http2.ErrorCode;
+import org.eclipse.jetty.http2.IStream;
 import org.eclipse.jetty.http2.api.Stream;
 import org.eclipse.jetty.http2.frames.DataFrame;
 import org.eclipse.jetty.http2.frames.HeadersFrame;
@@ -165,17 +165,30 @@ public class HttpReceiverOverHTTP2 extends HttpReceiver implements Stream.Listen
         HttpExchange exchange = getHttpExchange();
         if (exchange == null)
             return;
-
-        ErrorCode error = ErrorCode.from(frame.getError());
-        String reason = error == null ? "reset" : error.name().toLowerCase(Locale.ENGLISH);
-        exchange.getRequest().abort(new IOException(reason));
+        int error = frame.getError();
+        exchange.getRequest().abort(new IOException(ErrorCode.toString(error, "reset_code_" + error)));
     }
 
     @Override
     public boolean onIdleTimeout(Stream stream, Throwable x)
     {
-        responseFailure(x);
-        return true;
+        HttpExchange exchange = getHttpExchange();
+        if (exchange == null)
+            return false;
+        return !exchange.abort(x);
+    }
+
+    @Override
+    public void onFailure(Stream stream, int error, String reason, Callback callback)
+    {
+        responseFailure(new IOException(String.format("%s/%s", ErrorCode.toString(error, null), reason)));
+        callback.succeeded();
+    }
+
+    @Override
+    public void onClosed(Stream stream)
+    {
+        getHttpChannel().onStreamClosed((IStream)stream);
     }
 
     private void notifyContent(HttpExchange exchange, DataFrame frame, Callback callback)
