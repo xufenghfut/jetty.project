@@ -1035,17 +1035,19 @@ public class AsyncMiddleManServletTest
         });
         startClient();
 
-        ContentResponse response = client.newRequest("localhost", serverConnector.getLocalPort())
-            .timeout(5, TimeUnit.SECONDS)
-            .send();
+        assertDoesNotThrow( () -> {
+                    ContentResponse response = client.newRequest("localhost", serverConnector.getLocalPort())
+                            .timeout(5, TimeUnit.SECONDS)
+                            .send();
 
-        assertEquals(200, response.getStatus());
-        @SuppressWarnings("unchecked")
-        Map<String, Object> obj = (Map<String, Object>)JSON.parse(response.getContentAsString());
-        assertNotNull(obj);
-        assertEquals(2, obj.size());
-        assertEquals(value0, obj.get(key0));
-        assertEquals(value1, obj.get(key2));
+                    assertEquals(200, response.getStatus());
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> obj = (Map<String, Object>) JSON.parse(response.getContentAsString());
+                    assertNotNull(obj);
+                    assertEquals(2, obj.size());
+                    assertEquals(value0, obj.get(key0));
+                    assertEquals(value1, obj.get(key2));
+        } );
         // Make sure the files do not exist.
         try (DirectoryStream<Path> paths = Files.newDirectoryStream(targetTestsDir, inputPrefix + "*.*"))
         {
