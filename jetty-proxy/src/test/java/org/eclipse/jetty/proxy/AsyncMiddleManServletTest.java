@@ -82,6 +82,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.OS;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -970,12 +971,13 @@ public class AsyncMiddleManServletTest
         });
         startClient();
 
-        ContentResponse response = client.newRequest("localhost", serverConnector.getLocalPort())
-            .timeout(5, TimeUnit.SECONDS)
-            .send();
-
-        assertEquals(HttpStatus.OK_200, response.getStatus());
-        assertArrayEquals(data, response.getContent());
+        assertDoesNotThrow( () -> {
+            ContentResponse response = client.newRequest("localhost", serverConnector.getLocalPort())
+                    .timeout(5, TimeUnit.SECONDS)
+                    .send();
+            assertEquals(HttpStatus.OK_200, response.getStatus());
+            assertArrayEquals(data, response.getContent());
+        });
     }
 
     @Test
