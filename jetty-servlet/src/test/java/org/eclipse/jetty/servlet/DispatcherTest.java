@@ -46,6 +46,7 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletRequestWrapper;
 import javax.servlet.http.HttpServletResponse;
 import javax.servlet.http.HttpServletResponseWrapper;
+import javax.servlet.http.MappingMatch;
 
 import org.eclipse.jetty.logging.StacklessLogging;
 import org.eclipse.jetty.server.Dispatcher;
@@ -59,6 +60,7 @@ import org.eclipse.jetty.server.handler.ResourceHandler;
 import org.eclipse.jetty.toolchain.test.MavenTestingUtils;
 import org.eclipse.jetty.util.TypeUtil;
 import org.eclipse.jetty.util.UrlEncoded;
+import org.hamcrest.Matchers;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -748,6 +750,13 @@ public class DispatcherTest
             assertEquals("/context", request.getContextPath());
             assertEquals("/AssertForwardServlet", request.getServletPath());
 
+            HttpServletMapping mapping = request.getHttpServletMapping();
+            assertThat(mapping, Matchers.notNullValue());
+            assertThat(mapping.getServletName(), startsWith(this.getClass().getName() + "-"));
+            assertThat(mapping.getMatchValue(), is("/AssertForwardServlet"));
+            assertThat(mapping.getMappingMatch(), is(MappingMatch.PATH));
+            assertThat(mapping.getPattern(), is("/AssertForwardServlet/*"));
+
             response.setContentType("text/html");
             response.setStatus(HttpServletResponse.SC_OK);
             response.getOutputStream().print(request.getDispatcherType().toString());
@@ -831,6 +840,13 @@ public class DispatcherTest
             assertEquals("/context/IncludeServlet", request.getRequestURI());
             assertEquals("/context", request.getContextPath());
             assertEquals("/IncludeServlet", request.getServletPath());
+
+            HttpServletMapping mapping = request.getHttpServletMapping();
+            assertThat(mapping, Matchers.notNullValue());
+            assertThat(mapping.getServletName(), startsWith(IncludeServlet.class.getName() + "-"));
+            assertThat(mapping.getMatchValue(), is("/IncludeServlet"));
+            assertThat(mapping.getMappingMatch(), is(MappingMatch.PATH));
+            assertThat(mapping.getPattern(), is("/IncludeServlet/*"));
 
             response.setContentType("text/html");
             response.setStatus(HttpServletResponse.SC_OK);
