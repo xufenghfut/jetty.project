@@ -18,7 +18,6 @@
 
 package org.eclipse.jetty.webapp;
 
-import java.io.InputStream;
 import java.lang.instrument.ClassFileTransformer;
 import java.lang.instrument.IllegalClassFormatException;
 import java.net.URI;
@@ -27,11 +26,9 @@ import java.nio.file.Path;
 import java.security.ProtectionDomain;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Enumeration;
 import java.util.List;
 
 import org.eclipse.jetty.toolchain.test.MavenTestingUtils;
-import org.eclipse.jetty.util.IO;
 import org.eclipse.jetty.util.resource.PathResource;
 import org.eclipse.jetty.util.resource.Resource;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,10 +37,8 @@ import org.junit.jupiter.api.Test;
 import static org.eclipse.jetty.toolchain.test.ExtraMatchers.ordered;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.contains;
-import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -339,27 +334,5 @@ public class WebAppClassLoaderTest
         expected.add(targetTestClasses);
 
         assertThat("Resources Found (Parent Loader Priority == true) (with systemClasses filtering)", resources, ordered(expected));
-    }
-
-    @Test
-    public void ordering() throws Exception
-    {
-        // The existence of a URLStreamHandler changes the behavior
-        assumeTrue(URLStreamHandlerUtil.getFactory() == null, "URLStreamHandler changes behavior, skip test");
-
-        Enumeration<URL> resources = _loader.getResources("org/acme/clashing.txt");
-        assertTrue(resources.hasMoreElements());
-        URL resource = resources.nextElement();
-        try (InputStream data = resource.openStream())
-        {
-            assertThat("correct contents of " + resource, IO.toString(data), is("alpha"));
-        }
-        assertTrue(resources.hasMoreElements());
-        resource = resources.nextElement();
-        try (InputStream data = resource.openStream())
-        {
-            assertThat("correct contents of " + resource, IO.toString(data), is("omega"));
-        }
-        assertFalse(resources.hasMoreElements());
     }
 }

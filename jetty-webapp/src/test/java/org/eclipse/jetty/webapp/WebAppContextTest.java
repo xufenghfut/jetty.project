@@ -94,7 +94,7 @@ public class WebAppContextTest
     @Test
     public void testConfigurationClassesFromDefault()
     {
-        Server server = new Server();
+        Server server = newServer();
         // test if no classnames set, its the defaults
         WebAppContext wac = new WebAppContext();
         assertEquals(0, wac.getConfigurations().length);
@@ -294,18 +294,6 @@ public class WebAppContextTest
 
         server.start();
         assertTrue(context.isAvailable());
-    }
-
-    @Test
-    public void ordering() throws Exception
-    {
-        WebAppContext context = new WebAppContext();
-        Path testWebappDir = MavenTestingUtils.getProjectDirPath("src/test/webapp");
-        context.setBaseResource(new PathResource(testWebappDir));
-        context.setContextPath("/test");
-        new WebInfConfiguration().preConfigure(context);
-        assertEquals(Arrays.asList("acme.jar", "alpha.jar", "omega.jar"),
-            context.getMetaData().getWebInfJars().stream().map(r -> r.getURI().toString().replaceFirst(".+/", "")).collect(Collectors.toList()));
     }
 
     @Test
